@@ -8,13 +8,14 @@
 #include <semaphore.h>
 #include <pthread.h>
 #include <atomic>
+#include <unordered_set>
 
 int num_cluster, dims, max_num_iter, seed, inputThreads;
 std::string inputfilename;
 double threshold;
 bool compAllClusters, useGPU, useSharedMem, useKmeanspp;
 
-//TODO: debug race condition in parallel input parsing
+//TODO: verify that fix to parallel input parsing works as intended
 
 struct ThreadArgs {
     std::atomic_ulong* procInd;
@@ -27,20 +28,20 @@ void processInputLine(std::stringstream& ss, std::vector<float>& res){
     int buf;
     ss >> buf; //get rid of first int in each line
     for(int i = 0; i < dims; ++i){
-        if(ss.fail()){
-            std::cerr << "Stringstream failed! ";
-        }
         ss >> res[i];
     }
 }
 
 void* inputDataWork(void* args){
     ThreadArgs* ta = (ThreadArgs*)args;
-    long myInd = ta->procInd->fetch_add(1, std::memory_order_seq_cst);
     const long nLines = ta->streams->size();
+    //Need sem to protect atomic otherwise some threads access streams
+    //that are not ready for processing
+    sem_wait(ta->semPtr);
+    long myInd = ta->procInd->fetch_add(1, std::memory_order_seq_cst);
     while(myInd < nLines){
-        sem_wait(ta->semPtr);
         processInputLine((*(ta->streams))[myInd], (*(ta->data))[myInd]);
+        sem_wait(ta->semPtr);
         myInd = ta->procInd->fetch_add(1, std::memory_order_seq_cst);
     }
    
@@ -60,7 +61,7 @@ void processDataSeq(std::vector<std::vector<float>>& inputData, std::ifstream& i
 
 }
 
-void processDataPar(std::vector<std::vector<float>>& inputData, std::ifstream& infile, int workers){
+void processDataPar(std::vector<std::vector<float>>& inputData, std::ifstream& infile){
     const int nLines = inputData.size();
     std::vector<std::stringstream> dataStreams(nLines);
     std::string buf;
@@ -75,9 +76,9 @@ void processDataPar(std::vector<std::vector<float>>& inputData, std::ifstream& i
     args.data = &inputData;
     args.semPtr = &sem;
 
-    std::vector<pthread_t> threads(workers);
+    std::vector<pthread_t> threads(inputThreads);
 
-    for(int i = 0; i < workers; ++i){
+    for(int i = 0; i < inputThreads; ++i){
        pthread_create(&threads[i], NULL, inputDataWork, &args);
     }
 
@@ -87,7 +88,12 @@ void processDataPar(std::vector<std::vector<float>>& inputData, std::ifstream& i
         sem_post(&sem);
     }
 
-    for(int i = 0; i < workers; ++i){
+    //Send through extra sem increments so all threads can exit their work function
+    for(int i = 0; i < inputThreads; ++i){
+        sem_post(&sem);
+    }
+
+    for(int i = 0; i < inputThreads; ++i){
         int errorCode = pthread_join(threads[i], NULL);
         if(errorCode != 0) {
             std::cout << "Error in pthread " << i << " exit code: " << errorCode << '\n';
@@ -95,6 +101,34 @@ void processDataPar(std::vector<std::vector<float>>& inputData, std::ifstream& i
     }
 
     sem_destroy(&sem);
+}
+
+//TODO: make this function accessible to CUDA code too
+std::vector<std::vector<float>> getRandomCentroids(){
+    std::vector<std::vector<float>> centroids(num_cluster, std::vector<float>(dims));
+    srand(seed);
+    for(int i = 0; i < num_cluster; ++i){
+        for(int j = 0; j < dims; ++j){
+            centroids[i][j] = (float)rand() / RAND_MAX;
+        }
+    }
+    
+    return centroids;
+}
+
+//TODO: give this function an appropriate return value
+std::vector<std::vector<float>> getCentroidIdsSeq(const std::vector<std::vector<float>>& data, std::vector<int> centroidIds){
+    const int nPoints = data.size();
+    std::vector<std::vector<float>> centroids = getRandomCentroids();
+    int currIter = 0;
+    bool done = false;
+    
+    while(!done){
+        
+    }
+
+    //Returns final centroids in the case that they need to be printed
+    return centroids;
 }
 
 namespace po = boost::program_options;
@@ -155,7 +189,7 @@ int main(int argc, char** argv){
     if(inputThreads == 0){
         processDataSeq(inputData, infile);
     } else {
-        processDataPar(inputData, infile, inputThreads);
+        processDataPar(inputData, infile);
     }
 
     for(int i = 0; i < nLines; ++i){
