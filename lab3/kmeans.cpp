@@ -8,7 +8,6 @@
 #include <semaphore.h>
 #include <pthread.h>
 #include <atomic>
-#include <unordered_set>
 
 int num_cluster, dims, max_num_iter, seed, inputThreads;
 std::string inputfilename;
@@ -116,15 +115,28 @@ std::vector<std::vector<float>> getRandomCentroids(){
     return centroids;
 }
 
+std::pair<int, double> findClosestCentroid(const std::vector<float>& point, const std::vector<std::vector<float>>& centroids){
+    const int nCentroids = centroids.size();
+    double closestDist = std::numeric_limits<double>::infinity();
+    int closestInd = 0;
+    
+    for(int i = 0; i < nCentroids; ++i){
+        //TODO: continue here
+    }
+
+}
+
 //TODO: give this function an appropriate return value
 std::vector<std::vector<float>> getCentroidIdsSeq(const std::vector<std::vector<float>>& data, std::vector<int> centroidIds){
     const int nPoints = data.size();
     std::vector<std::vector<float>> centroids = getRandomCentroids();
     int currIter = 0;
     bool done = false;
-    
+    double currConv;
+
     while(!done){
-        
+        ++currIter;
+        //TODO: continue here 
     }
 
     //Returns final centroids in the case that they need to be printed
