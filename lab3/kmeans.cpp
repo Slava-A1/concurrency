@@ -1,6 +1,7 @@
 #include <boost/program_options.hpp>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <chrono>
 #include <sstream>
@@ -8,10 +9,11 @@
 #include <semaphore.h>
 #include <pthread.h>
 #include <atomic>
+#include <cmath>
 
 int num_cluster, dims, max_num_iter, seed, inputThreads;
 std::string inputfilename;
-double threshold;
+float threshold;
 bool compAllClusters, useGPU, useSharedMem, useKmeanspp;
 
 //TODO: verify that fix to parallel input parsing works as intended
@@ -102,41 +104,105 @@ void processDataPar(std::vector<std::vector<float>>& inputData, std::ifstream& i
     sem_destroy(&sem);
 }
 
+inline float rand_float(){
+    return rand() / static_cast<float>((long long) RAND_MAX + 1);
+}
+
 //TODO: make this function accessible to CUDA code too
-std::vector<std::vector<float>> getRandomCentroids(){
-    std::vector<std::vector<float>> centroids(num_cluster, std::vector<float>(dims));
-    srand(seed);
-    for(int i = 0; i < num_cluster; ++i){
-        for(int j = 0; j < dims; ++j){
-            centroids[i][j] = (float)rand() / RAND_MAX;
-        }
-    }
+std::vector<std::vector<float>> getRandomCentroids(const std::vector<std::vector<float>>& data){
+    std::vector<std::vector<float>> centroids(num_cluster);
     
+    for(int i = 0; i < num_cluster; ++i){
+        int index = (int)(rand_float() * data.size());
+        centroids[i] = data[index];
+    }
+
     return centroids;
 }
 
-std::pair<int, double> findClosestCentroid(const std::vector<float>& point, const std::vector<std::vector<float>>& centroids){
+//TODO: make this function visible to CUDA code too
+float getDistance(const std::vector<float>& a, const std::vector<float>& b){ 
+    const int dim = a.size();
+    float distance = 0.0;
+    
+    for(int i = 0; i < dim; ++i){
+        distance += (a[i] - b[i]) * (a[i] - b[i]);
+    }
+
+    return std::sqrt(distance);
+}
+
+void updateCentroid(std::vector<float>& centroid, const int nPoints){
+    
+    if(nPoints == 0){
+        return;
+    }
+
+    const int n = centroid.size();
+    for(int i = 0; i < n; ++i){
+        centroid[i] /= nPoints;
+    }
+}
+
+std::pair<int, float> findClosestCentroid(const std::vector<float>& point, const std::vector<std::vector<float>>& centroids){
     const int nCentroids = centroids.size();
-    double closestDist = std::numeric_limits<double>::infinity();
+    float closestDist = std::numeric_limits<float>::infinity();
     int closestInd = 0;
     
     for(int i = 0; i < nCentroids; ++i){
-        //TODO: continue here
+        float dist = getDistance(point, centroids[i]);
+        if(dist < closestDist){
+            closestDist = dist;
+            closestInd = i;
+        }
     }
 
+    return {closestInd, closestDist};
 }
 
-//TODO: give this function an appropriate return value
-std::vector<std::vector<float>> getCentroidIdsSeq(const std::vector<std::vector<float>>& data, std::vector<int> centroidIds){
+//Returns the centroids and populates the passed in vector of integers with the centroid id for each point
+std::vector<std::vector<float>> genCentroidSeq(const std::vector<std::vector<float>>& data, std::vector<int> centroidIds){
     const int nPoints = data.size();
-    std::vector<std::vector<float>> centroids = getRandomCentroids();
-    int currIter = 0;
+    std::vector<std::vector<float>> centroids = getRandomCentroids(data);
+    //Stores number of points associated with each centroid
+    std::vector<int> numAssocPoints(num_cluster);
+    int currIter = 1;
     bool done = false;
-    double currConv;
+    float currConv = 1.0;
 
     while(!done){
+        float conv = 0.0;
+        
+        std::fill(numAssocPoints.begin(), numAssocPoints.end(), 0);
+        //Stores sums of values for each centroid, will be divided later
+        std::vector<std::vector<float>> nextCentroids(num_cluster, std::vector<float>(dims, 0.0));
+        
+        //Finding closest centroid to each point
+        for(int i = 0; i < nPoints; ++i){
+            std::pair<int, float> closePair = findClosestCentroid(data[i], centroids);
+            centroidIds[i] = closePair.first;
+            conv += closePair.second;
+
+            //One more point associated with the selected centroid
+            numAssocPoints[closePair.first] += 1;
+            //add in values for later division
+            for(int j = 0; j < dims; ++j){
+                nextCentroids[closePair.first][j] += data[i][j];
+            }
+        }
+        
+        //updating centroids
+        for(int i = 0; i < num_cluster; ++i){
+            updateCentroid(nextCentroids[i], numAssocPoints[i]);
+        }
+        
+        centroids = std::move(nextCentroids);
+        
+        float improvementAmt = std::abs(currConv - conv) / currConv;
+        currConv = conv;
+
+        done = (currIter == max_num_iter) || (improvementAmt < threshold);
         ++currIter;
-        //TODO: continue here 
     }
 
     //Returns final centroids in the case that they need to be printed
@@ -147,6 +213,7 @@ namespace po = boost::program_options;
 
 int main(int argc, char** argv){
     std::chrono::high_resolution_clock::time_point startPoint = std::chrono::high_resolution_clock::now();
+    srand(seed);
 
     try{
 
@@ -164,7 +231,7 @@ int main(int argc, char** argv){
             ("d", po::value<int>(&dims)->default_value(-1), "Integer specifying the dimensions of the points")
             ("i", po::value<std::string>(&inputfilename), "String specifying the input file name")
             ("m", po::value<int>(&max_num_iter)->default_value(-1), "Integer specifying the maximum number of iterations")
-            ("t", po::value<double>(&threshold)->default_value(-1), "Double specifying the threshold for convergence test")
+            ("t", po::value<float>(&threshold)->default_value(-1.0), "Float specifying the threshold for convergence test")
             ("c", "If present, program will output the centroids of all clusters, otherwise it will output the labels of all points")
             ("s", po::value<int>(&seed)->default_value(-1), "Integer specifying the seed for rand()")
             ("g", "Enables the GPU implementation")
@@ -204,12 +271,23 @@ int main(int argc, char** argv){
         processDataPar(inputData, infile);
     }
 
+    std::vector<int> centroidIds(nLines);
+    std::vector<std::vector<float>> centroids = genCentroidSeq(inputData, centroidIds);
+    for(int i = 0; i < num_cluster; ++i){
+        for(int j = 0; j < dims; ++j){
+            std::cout << centroids[i][j] << ' ';
+        }
+        std::cout << '\n';
+    }
+
+    /*
     for(int i = 0; i < nLines; ++i){
         for(int j = 0; j < dims; ++j){
             std::cout << inputData[i][j] << ' ';
         }
         std::cout << '\n';
     }
+    */
 
     std::chrono::high_resolution_clock::time_point endPoint = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> time = endPoint - startPoint;
