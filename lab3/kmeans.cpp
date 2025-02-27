@@ -230,8 +230,8 @@ int main(int argc, char** argv){
             ("k", po::value<int>(&num_cluster)->default_value(-1), "Integer specifying the number of clusters to use")
             ("d", po::value<int>(&dims)->default_value(-1), "Integer specifying the dimensions of the points")
             ("i", po::value<std::string>(&inputfilename), "String specifying the input file name")
-            ("m", po::value<int>(&max_num_iter)->default_value(-1), "Integer specifying the maximum number of iterations")
-            ("t", po::value<float>(&threshold)->default_value(-1.0), "Float specifying the threshold for convergence test")
+            ("m", po::value<int>(&max_num_iter)->default_value(100000), "Integer specifying the maximum number of iterations")
+            ("t", po::value<float>(&threshold)->default_value(0.00001), "Float specifying the threshold for convergence test")
             ("c", "If present, program will output the centroids of all clusters, otherwise it will output the labels of all points")
             ("s", po::value<int>(&seed)->default_value(-1), "Integer specifying the seed for rand()")
             ("g", "Enables the GPU implementation")
@@ -273,7 +273,15 @@ int main(int argc, char** argv){
 
     std::vector<int> centroidIds(nLines);
     std::vector<std::vector<float>> centroids = genCentroidSeq(inputData, centroidIds);
+    
+    //temp sorting to help with debug
+    std::sort(centroids.begin(), centroids.end(), [](const std::vector<float>& first, const std::vector<float>& second){
+        return first[0] < second[0];
+    });
+
+    std::cout << std::setprecision(5);
     for(int i = 0; i < num_cluster; ++i){
+        std::cout << i << ' ';
         for(int j = 0; j < dims; ++j){
             std::cout << centroids[i][j] << ' ';
         }
