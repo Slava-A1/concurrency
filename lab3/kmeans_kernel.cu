@@ -1,6 +1,61 @@
 #include <cuda.h>
 #include <vector>
+#include <cmath>
 #include "kmeans.h"
+#include <iostream>
+
+#define CHECK_CUDA1(call) \
+    do { \
+        cudaError_t err = call; \
+        if (err != cudaSuccess) { \
+            std::cerr << "CUDA Error: " << cudaGetErrorString(err) << " at " << __FILE__ << ":" << __LINE__ << std::endl; \
+        } \
+    } while (0)
+
+//Credit to Rishi and Oakridge National Labs (which is where I think GPT pulled his macro from)
+#define CHECK_CUDA(call) ({ \
+    cudaError_t err = call; \
+    if(err != cudaSuccess){ \
+        std::cerr << "CUDA Error: " << cudaGetErrorString(err) << " at " << __FILE__ << ":" << __LINE__ << std::endl; \
+    } \
+})
+
+__global__ void addVectors(float* a, float* b, float* res, int sz){
+    int myIndex = (blockIdx.x * blockDim.x) + threadIdx.x;
+
+    if(myIndex < sz){
+        res[myIndex] = a[myIndex] + b[myIndex];
+    }
+} 
+
+void cudaBasicTest(const std::vector<float>& a, const std::vector<float>& b, std::vector<float>& out){
+    const int sz = a.size();
+    float *daPtr, *dbPtr, *dresPtr;
+    size_t allocSize = sizeof(float) * sz;
+    CHECK_CUDA(cudaMalloc(&daPtr, allocSize));
+    CHECK_CUDA(cudaMalloc(&dbPtr, allocSize));
+    CHECK_CUDA(cudaMalloc(&dresPtr, allocSize));
+     
+    CHECK_CUDA(cudaMemcpy(daPtr, a.data(), allocSize, cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(dbPtr, b.data(), allocSize, cudaMemcpyHostToDevice));
+
+    int threadsPerBlock = 256; //why not
+    int nBlocks = (int)std::ceil(((float)sz) / threadsPerBlock);
+
+    addVectors<<<nBlocks, threadsPerBlock>>>(daPtr, dbPtr, dresPtr, sz);
+    cudaError_t lastErr = cudaGetLastError();
+    if(lastErr != cudaSuccess){
+        std::cerr << "CUDA Error: " << cudaGetErrorString(lastErr) << std::endl;
+    }
+    
+    CHECK_CUDA(cudaDeviceSynchronize());
+
+    CHECK_CUDA(cudaMemcpy(out.data(), dresPtr, allocSize, cudaMemcpyDeviceToHost));
+
+    CHECK_CUDA(cudaFree(daPtr));
+    CHECK_CUDA(cudaFree(dbPtr));
+    CHECK_CUDA(cudaFree(dresPtr));
+}
 
 //number of get distance ops is num_points * num_clusters
 //Idea: one block for each get distance, with one thread per distance operation (a - b)^2
@@ -9,6 +64,7 @@
 //Better: store distances in array, then have another kernel find max for each point
 //Technically a parallel reduction would be best but not sure if there will be enough time to write that
 
+/*
 //Returns the centroids and populates the passed in vector of integers with the centroid id for each point
 std::vector<std::vector<float>> genCentroidPar(const std::vector<std::vector<float>>& data, std::vector<int> centroidIds){
     //Set up
@@ -67,3 +123,5 @@ std::vector<std::vector<float>> genCentroidPar(const std::vector<std::vector<flo
     //Returns final centroids in the case that they need to be printed
     return centroids;
 }
+
+*/

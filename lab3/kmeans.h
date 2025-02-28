@@ -1,3 +1,6 @@
+#ifndef KMEANS_H
+#define KMEANS_H
+
 #include <vector>
 #include <string>
 
@@ -5,8 +8,8 @@
 extern int num_cluster, dims, max_num_iter, seed, inputThreads;
 extern std::string inputfilename;
 extern float threshold;
-extern bool printCentroidIds, useGPU, useSharedMem, useKmeanspp;
+extern bool printCentroids, useGPU, useSharedMem, useKmeanspp;
 
-std::vector<std::vector<float>> getRandomCentroids(const std::vector<std::vector<float>>& data);
+void cudaBasicTest(const std::vector<float>& a, const std::vector<float>& b, std::vector<float>& res);
 
-std::vector<std::vector<float>> genCentroidPar(const std::vector<std::vector<float>>& data, std::vector<int> centroidIds);
+#endif //KMEANS_H

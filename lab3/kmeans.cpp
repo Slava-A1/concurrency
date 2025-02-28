@@ -1,6 +1,5 @@
-#include <boost/program_options.hpp>
-#include <iomanip>
 #include <iostream>
+#include <iomanip>
 #include <limits>
 #include <string>
 #include <chrono>
@@ -9,13 +8,15 @@
 #include <semaphore.h>
 #include <pthread.h>
 #include <atomic>
+#include <unistd.h>
 #include <cmath>
+#include <stdio.h>
 #include "kmeans.h"
 
 int num_cluster, dims, max_num_iter, seed, inputThreads;
 std::string inputfilename;
 float threshold;
-bool printCentroidIds, useGPU, useSharedMem, useKmeanspp;
+bool printCentroids, useGPU, useSharedMem, useKmeanspp;
 
 //TODO: verify that fix to parallel input parsing works as intended
 
@@ -70,7 +71,7 @@ void processDataPar(std::vector<std::vector<float>>& inputData, std::ifstream& i
     std::getline(infile, buf); //clear newline
     sem_t sem;
     sem_init(&sem, 0, 0);
-    std::atomic_ulong procInd = 0;
+    std::atomic_ulong procInd(0);
 
     ThreadArgs args;
     args.procInd = &procInd;
@@ -120,7 +121,6 @@ std::vector<std::vector<float>> getRandomCentroids(const std::vector<std::vector
     return centroids;
 }
 
-//TODO: make this function visible to CUDA code too
 float getDistance(const std::vector<float>& a, const std::vector<float>& b){ 
     const int dim = a.size();
     float distance = 0.0;
@@ -168,10 +168,10 @@ std::vector<std::vector<float>> genCentroidSeq(const std::vector<std::vector<flo
     std::vector<int> numAssocPoints(num_cluster);
     int currIter = 1;
     bool done = false;
-    float currConv = 1.0;
-
+    //float currConv = 1.0;
+    
     while(!done){
-        float conv = 0.0;
+        //float conv = 0.0;
         
         std::fill(numAssocPoints.begin(), numAssocPoints.end(), 0);
         //Stores sums of values for each centroid, will be divided later
@@ -181,7 +181,7 @@ std::vector<std::vector<float>> genCentroidSeq(const std::vector<std::vector<flo
         for(int i = 0; i < nPoints; ++i){
             std::pair<int, float> closePair = findClosestCentroid(data[i], centroids);
             centroidIds[i] = closePair.first;
-            conv += closePair.second;
+            //conv += closePair.second;
 
             //One more point associated with the selected centroid
             numAssocPoints[closePair.first] += 1;
@@ -196,68 +196,143 @@ std::vector<std::vector<float>> genCentroidSeq(const std::vector<std::vector<flo
             updateCentroid(nextCentroids[i], numAssocPoints[i]);
         }
         
+        //get max dist between any old + new centroid
+        float improvementAmt = 0.0;
+        for(int i = 0; i < num_cluster; ++i){
+            improvementAmt = std::max(improvementAmt, getDistance(nextCentroids[i], centroids[i]));
+        }
+
         centroids = std::move(nextCentroids);
-        
-        float improvementAmt = std::abs(currConv - conv) / currConv;
-        currConv = conv;
+
+        //old, broken
+        //float improvementAmt = std::abs(currConv - conv) / currConv;
+        //currConv = conv;
 
         done = (currIter == max_num_iter) || (improvementAmt < threshold);
         ++currIter;
     }
-
+    
     //Returns final centroids in the case that they need to be printed
     return centroids;
 }
 
-namespace po = boost::program_options;
 
 int main(int argc, char** argv){
     std::chrono::high_resolution_clock::time_point startPoint = std::chrono::high_resolution_clock::now();
-    srand(seed);
 
-    try{
+/*
+ *
+    -k num_cluster: an integer specifying the number of clusters
+    -d dims: an integer specifying the dimension of the points
+    -i inputfilename: a string specifying the input filename
+    -m max_num_iter: an integer specifying the maximum number of iterations
+    -t threshold: a double specifying the threshold for convergence test.
+    -c: a flag to control the output of your program. If -c is specified, your program should output the centroids of all clusters. If -c is not specified, your program should output the labels of all points. See details below.
+    -s seed: an integer specifying the seed for rand(). This is used by the autograder to simplify the correctness checking process. See details below.
+    -g: a flag to enable the GPU implementation
+    -f: a flag to enable the shared-memory GPU implementation
+    -p: a flag to enable the Kmeans++ implementation
+    -w: number of pthreads to use for input parsing
 
-        po::command_line_style::style_t style = po::command_line_style::style_t(
-            po::command_line_style::unix_style | 
-            po::command_line_style::allow_long_disguise | 
-            po::command_line_style::long_allow_adjacent |
-            po::command_line_style::short_allow_adjacent
-        );
+*/
 
-        po::options_description desc("Program options: ");
-        desc.add_options()
-            ("help", "List option descriptions")
-            ("k", po::value<int>(&num_cluster)->default_value(-1), "Integer specifying the number of clusters to use")
-            ("d", po::value<int>(&dims)->default_value(-1), "Integer specifying the dimensions of the points")
-            ("i", po::value<std::string>(&inputfilename), "String specifying the input file name")
-            ("m", po::value<int>(&max_num_iter)->default_value(100000), "Integer specifying the maximum number of iterations")
-            ("t", po::value<float>(&threshold)->default_value(0.00001), "Float specifying the threshold for convergence test")
-            ("c", "If present, program will output the centroids of all clusters, otherwise it will output the labels of all points")
-            ("s", po::value<int>(&seed)->default_value(-1), "Integer specifying the seed for rand()")
-            ("g", "Enables the GPU implementation")
-            ("f", "Enables the shared memory GPU implementation")
-            ("p", "Enables the Kmeans++ implementation")
-            ("iw", po::value<int>(&inputThreads)->default_value(0), "Integer specifying the number of threads to spawn for input parsing")
-        ;
+    num_cluster = -1;
+    dims = -1;
+    
+    max_num_iter = -1;
+    threshold = -1.0;
+    printCentroids = false;
+    seed = -1;
+    useGPU = false;
+    useSharedMem = false;
+    useKmeanspp = false;
+    inputThreads = 8;
 
-        po::variables_map vm;
-        po::store(po::parse_command_line(argc, argv, desc, style), vm);
-        po::notify(vm);
 
-        if(vm.count("help")){
-            std::cout << desc << '\n';
-            return 0;
+    //TODO: do command line argument parsing here with getopt
+    char c;
+    while((c = getopt(argc, argv, "pfgcw:s:t:m:i:d:k:")) != -1){
+        switch(c){
+            case 'k':
+                num_cluster = atoi(optarg);
+                break;
+            case 'd':
+                dims = atoi(optarg);
+                break;
+            case 'i':
+                inputfilename = optarg; //init string with passed in char*
+                break;
+            case 'm':
+                max_num_iter = atoi(optarg);
+                break;
+            case 't':
+                threshold = atof(optarg);
+                break;
+            case 'c':
+                printCentroids = true;
+                break;
+            case 's':
+                seed = atoi(optarg);
+                break;
+            case 'g':
+                useGPU = true;
+                break;
+            case 'f':
+                useSharedMem = true;
+                break;
+            case 'p':
+                useKmeanspp = true;
+                break;
+            case 'w':
+                inputThreads = atoi(optarg);
+                break;
+            case '?':
+                std::cerr << "Unknown or missing argument!\n";
+                return 1;
+            default:
+                return 1;
         }
+    }
 
-        printCentroidIds = vm.count("c");
-        useGPU = vm.count("g");
-        useSharedMem = vm.count("f");
-        useKmeanspp = vm.count("p");
-
-    } catch(std::exception& e){
-        std::cerr << "Error: " << e.what() << '\n';
+    if(num_cluster == -1){
+        std::cerr << "Missing number of clusters!\n";
         return 1;
     }
+    if(dims == -1){
+        std::cerr << "Missing point dimensions!\n";
+        return 1;
+    }
+    if(inputfilename.size() == 0){
+        std::cerr << "Missing input file!\n";
+        return 1;
+    }
+    if(max_num_iter == -1){
+        std::cerr << "Missing number of iterations\n";
+        return 1;
+    }
+    if(threshold == -1.0){
+        std::cerr << "Missing threshold!\n";
+        return 1;
+    }
+    if(seed == -1.0){
+        std::cerr << "Missing seed!\n";
+        return 1;
+    }
+
+    /*
+    std::cout << "num_cluster: " << num_cluster << '\n';
+    std::cout << "dims: " << dims << '\n';
+    std::cout << "inputfilename: " << inputfilename << '\n';
+    std::cout << "max_num_iter: " << max_num_iter << '\n';
+    std::cout << "threshold: " << threshold << '\n';
+    std::cout << "seed: " << seed << '\n';
+    std::cout << "inputThreads: " << inputThreads << '\n';
+    std::cout << "printCentroids: " << printCentroids << '\n';
+    std::cout << "useGPU: " << useGPU << '\n';
+    std::cout << "useSharedMem: " << useSharedMem << '\n';
+    std::cout << "useKmeanspp: " << useKmeanspp << '\n';
+    */
+    srand(seed);
 
     std::ifstream infile(inputfilename);
     long nLines;
@@ -279,7 +354,27 @@ int main(int argc, char** argv){
         std::cerr << "Need to implement shared mem approach!\n";
         return 1;
     } else if(useGPU){
+
+        ///*         
+        std::vector<float> testA(2048, 1.0);
+        std::vector<float> testB(2048, 5.0);
+        std::vector<float> output(2048);
+
+        cudaBasicTest(testA, testB, output);
         
+        for(int i = 0; i < 2048; ++i){
+            
+            if(output[i] != 6.0){
+                std::cout << "Error at index " << i << " expected 6.0 got " << output[i] << '\n';
+                return 1;
+            }
+
+        }
+        
+        std::cout << "Basic CUDA test success!\n";
+        return 0;
+        //*/
+
     } else if(useKmeanspp) {
         //TODO: implement this
         std::cerr << "Need to implement kmeans++ approach!\n";
@@ -295,7 +390,7 @@ int main(int argc, char** argv){
     });
     */
 
-    if(printCentroidIds){
+    if(printCentroids){
 
         for(int i = 0; i < num_cluster; ++i){
             std::cout << i << ' ';
