@@ -1,1 +1,1 @@
-./kmeans -k 16 -d 16 -i random-n2048-d16-c16.txt --iw 8 -s 8675309 -m 100000 -t 0.00001
+./kmeans -k 16 -d 16 -i random-n2048-d16-c16.txt --iw 8 -s 8675309 -m 100000 -t 0.00001 -c

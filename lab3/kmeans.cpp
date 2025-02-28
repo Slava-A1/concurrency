@@ -10,11 +10,12 @@
 #include <pthread.h>
 #include <atomic>
 #include <cmath>
+#include "kmeans.h"
 
 int num_cluster, dims, max_num_iter, seed, inputThreads;
 std::string inputfilename;
 float threshold;
-bool compAllClusters, useGPU, useSharedMem, useKmeanspp;
+bool printCentroidIds, useGPU, useSharedMem, useKmeanspp;
 
 //TODO: verify that fix to parallel input parsing works as intended
 
@@ -108,7 +109,6 @@ inline float rand_float(){
     return rand() / static_cast<float>((long long) RAND_MAX + 1);
 }
 
-//TODO: make this function accessible to CUDA code too
 std::vector<std::vector<float>> getRandomCentroids(const std::vector<std::vector<float>>& data){
     std::vector<std::vector<float>> centroids(num_cluster);
     
@@ -249,7 +249,7 @@ int main(int argc, char** argv){
             return 0;
         }
 
-        compAllClusters = vm.count("c");
+        printCentroidIds = vm.count("c");
         useGPU = vm.count("g");
         useSharedMem = vm.count("f");
         useKmeanspp = vm.count("p");
@@ -272,19 +272,44 @@ int main(int argc, char** argv){
     }
 
     std::vector<int> centroidIds(nLines);
-    std::vector<std::vector<float>> centroids = genCentroidSeq(inputData, centroidIds);
+    std::vector<std::vector<float>> centroids;
     
+    if(useSharedMem){
+        //TODO: implement this
+        std::cerr << "Need to implement shared mem approach!\n";
+        return 1;
+    } else if(useGPU){
+        
+    } else if(useKmeanspp) {
+        //TODO: implement this
+        std::cerr << "Need to implement kmeans++ approach!\n";
+        return 1;
+    } else { //Sequential approach on CPU
+       centroids = genCentroidSeq(inputData, centroidIds);
+    }
+
+    /* 
     //temp sorting to help with debug
     std::sort(centroids.begin(), centroids.end(), [](const std::vector<float>& first, const std::vector<float>& second){
         return first[0] < second[0];
     });
+    */
 
-    std::cout << std::setprecision(5);
-    for(int i = 0; i < num_cluster; ++i){
-        std::cout << i << ' ';
-        for(int j = 0; j < dims; ++j){
-            std::cout << centroids[i][j] << ' ';
+    if(printCentroidIds){
+
+        for(int i = 0; i < num_cluster; ++i){
+            std::cout << i << ' ';
+            for(int j = 0; j < dims; ++j){
+                std::cout << centroids[i][j] << ' ';
+            }
+            std::cout << '\n';
         }
+    } else {
+        std::cout << "clusters: " << std::setprecision(5);
+        for(int i = 0; i < nLines; ++i){
+            std::cout << ' ' << centroidIds[i];
+        }
+        
         std::cout << '\n';
     }
 

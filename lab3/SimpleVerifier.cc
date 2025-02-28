@@ -23,10 +23,11 @@ void processDataSeq(std::vector<std::vector<float>>& inputData, std::istream& in
     std::string buf;
 
     while(std::getline(infile, buf)){
-        if(buf.size() == 0){
-            //hit newline at end of file
+        //Kind of a hack to prevent the timing line and end newline from being added
+        if(buf.size() < 25){
             break;
         }
+        //std::cout << "buf len: " << buf.size() << '\n';
         std::stringstream ss(std::move(buf));
         inputData.push_back(std::vector<float>());
         processInputLine(ss, inputData.back());
@@ -72,7 +73,7 @@ void printErrorInfo(const std::string& failCmd, const std::vector<std::vector<fl
 }
 
 //TODO: increase this back to 50 later
-constexpr int NUM_ITERS = 1;
+constexpr int NUM_ITERS = 50;
 
 int main(int argc, char** argv){
 
@@ -124,12 +125,12 @@ int main(int argc, char** argv){
     for(int k = 0; k < cmds.size(); ++k){
         for(int j = 0; j < NUM_ITERS; ++j){
             std::string cmdOut = exec(cmds[k]);
+            //std::cout << cmdOut << "\nDone printing cmdout\n";
             std::stringstream ss(std::move(cmdOut));
             std::vector<std::vector<float>> outData;
             processDataSeq(outData, ss);
             
-            //Need to have -1 to account for timing line
-            if(nClusters != (outData.size() - 1)){
+            if(nClusters != outData.size()){
                 std::cout << "Number of clusters differs!\n";
                 printErrorInfo(cmds[k], outData);
                 return 1;
@@ -145,6 +146,18 @@ int main(int argc, char** argv){
                 return first[0] < second[0];
             });
             
+            /*
+            for(int x = 0; x < outData.size(); ++x){
+                std::cout << x << ' ';
+                for(int y = 0; y < outData[x].size(); ++y){
+                    std::cout << outData[x][y] << ' ';
+                }
+                std::cout << '\n';
+            }
+
+            return 0;
+            */
+
             bool allGood = true;
             //Verifying all of the clusters
             for(int cluster = 0; cluster < nClusters; ++cluster){
@@ -172,7 +185,10 @@ int main(int argc, char** argv){
 
                 }
             }
-
+            
+            if(allGood){
+                numGood[k] += 1;
+            }
         
         }
     }
